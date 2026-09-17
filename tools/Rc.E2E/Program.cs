@@ -33,6 +33,7 @@ internal static class Program
 
         Process? relay = null;
         Process? agent = null;
+        Process? agentCf = null;
         var relayLog = new StringBuilder();
         var agentLog = new StringBuilder();
         var results = new List<(bool Ok, string Name, string Detail)>();
@@ -117,6 +118,9 @@ internal static class Program
                 scale = 100,
                 tileSize = 64,
                 keyframeIntervalSeconds = 2,
+                // No window during automated runs: tests must never pop up UI, and a headless CI
+                // runner may not be able to create one at all.
+                showWindow = false,
             }, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
 
             relay = Start("dotnet", relayDir, relayLog, new[] { Path.Combine(relayDir, "rcrelay.dll") }, relayEnv);
@@ -226,6 +230,95 @@ internal static class Program
 
             var agentErrors = ReadAgentErrors(agentWorkDir);
             results.Add((agentErrors is null, "agent log clean", agentErrors ?? "no errors logged"));
+
+            // ---- controller-first regression phase ----
+            // Every check above connects the agent first. This phase covers the reversed attach order
+            // that once exposed a real bug: when a controller was already attached and an agent then
+            // joined that existing session, RelaySession.RunAgentAsync called PublishGeometryAsync
+            // before starting the agent read loop. That call awaited controller.Ready, which was never
+            // completed, so the agent socket was never read and the controller stayed frozen forever.
+            // The fix completes peer.Ready after the HelloAck; this test fails if that regresses.
+            if (!opt.SkipControllerFirst)
+            {
+                var cfId = opt.AgentId + "-cf";
+                var agentCfWorkDir = Path.Combine(workDir, "agent-cf");
+                var cfOnlineRecorded = false;
+                try
+                {
+                    // Same agent payload as the first phase, but a different id gets a fresh session.
+                    CopyDirectory(agentDir, agentCfWorkDir);
+                    await File.WriteAllTextAsync(Path.Combine(agentCfWorkDir, "agent.config.json"), JsonSerializer.Serialize(new
+                    {
+                        relayUrl = $"{scheme}://127.0.0.1:{opt.Port}/agent?id={cfId}",
+                        agentId = cfId,
+                        token = opt.Token,
+                        allowUntrustedCert = false,
+                        pinnedCertSha256 = pinnedFingerprint ?? "",
+                        targetFps = 15,
+                        jpegQuality = 60,
+                        scale = 100,
+                        tileSize = 64,
+                        keyframeIntervalSeconds = 2,
+                        showWindow = false,
+                    }, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+
+                    using var cfCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                    using var cfWs = new WebSocketHandle(await WsClient.ConnectAsync(new WsClientOptions
+                    {
+                        Url = $"{scheme}://127.0.0.1:{opt.Port}/control?id={cfId}",
+                        Token = opt.Token,
+                        AllowUntrustedCert = false,
+                        PinnedCertSha256 = pinnedFingerprint,
+                    }, cfCts.Token));
+
+                    await WsFraming.SendJsonAsync(cfWs.Socket, MsgType.Hello, new HelloMessage { Role = Role.Control }, cfCts.Token);
+
+                    // Controller only: the relay must answer with an Ok ack carrying no agent geometry.
+                    var cfAck = await WaitForHelloAckAsync(cfWs.Socket, TimeSpan.FromSeconds(20), requireGeometry: false);
+                    cfOnlineRecorded = true;
+                    var cfOnlineOk = cfAck is { Ok: true, PeerOnline: false, ScreenWidth: 0 };
+                    results.Add((cfOnlineOk, "controller-first: controller online with no agent",
+                        cfAck is null
+                            ? "no HelloAck within 20s"
+                            : $"Ok={cfAck.Ok} peerOnline={cfAck.PeerOnline} screen={cfAck.ScreenWidth}x{cfAck.ScreenHeight}"));
+
+                    // Let the session settle so the agent really joins an already-established session.
+                    await Task.Delay(1500, cfCts.Token);
+
+                    // rcagent enforces a single instance via a machine-wide named mutex, so the first
+                    // agent must be gone before this one can start. All of its checks have completed.
+                    TryKill(agent);
+                    agent = null;
+
+                    agentCf = Start(Path.Combine(agentCfWorkDir, "rcagent.exe"), agentCfWorkDir, agentLog, [], null);
+
+                    var cfStart = Stopwatch.StartNew();
+                    var cfKeyframe = await WaitForKeyframeAsync(cfWs.Socket, TimeSpan.FromSeconds(25));
+                    if (cfKeyframe is null)
+                    {
+                        results.Add((false, "controller-first: agent joins existing session",
+                            "no keyframe within 25s (agent socket likely never read)"));
+                    }
+                    else
+                    {
+                        // Pass a null ack: the only ack this socket saw predates the agent, so its 0x0
+                        // geometry must not be cross-checked against the real frame size.
+                        var (_, problem) = ValidatePacket(cfKeyframe, null);
+                        results.Add((problem is null, "controller-first: agent joins existing session",
+                            problem ?? $"keyframe after {cfStart.ElapsedMilliseconds}ms, {cfKeyframe.Tiles.Count} tiles"));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Record the missing results instead of letting the phase abort the whole run.
+                    if (!cfOnlineRecorded)
+                    {
+                        results.Add((false, "controller-first: controller online with no agent",
+                            ex.GetType().Name + ": " + ex.Message));
+                    }
+                    results.Add((false, "controller-first: agent joins existing session", ex.GetType().Name + ": " + ex.Message));
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -234,6 +327,7 @@ internal static class Program
         finally
         {
             TryKill(agent);
+            TryKill(agentCf);
             TryKill(relay);
         }
 
@@ -336,7 +430,12 @@ internal static class Program
         return (pfxPath, password, Convert.ToHexString(SHA256.HashData(cert.RawData)));
     }
 
-    private static async Task<HelloAckMessage?> WaitForHelloAckAsync(WebSocket ws, TimeSpan timeout)
+    /// <summary>
+    /// Waits for a HelloAck. <paramref name="requireGeometry"/> is true for the normal agent-first
+    /// flow (the ack must carry the agent geometry); false for controller-first, where the first ack
+    /// legitimately reports a zero-sized screen because no agent has joined yet.
+    /// </summary>
+    private static async Task<HelloAckMessage?> WaitForHelloAckAsync(WebSocket ws, TimeSpan timeout, bool requireGeometry = true)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
@@ -349,7 +448,7 @@ internal static class Program
             if (message.Value.Type == MsgType.HelloAck)
             {
                 var ack = WsFraming.ReadJson<HelloAckMessage>(message.Value.Payload);
-                if (ack is not null && ack.ScreenWidth > 0)
+                if (ack is not null && (!requireGeometry || ack.ScreenWidth > 0))
                 {
                     return ack;
                 }
@@ -621,6 +720,7 @@ internal static class Program
         bool Keep,
         bool TestInput,
         bool Tls,
+        bool SkipControllerFirst,
         string? PfxPath,
         string? PfxPassword,
         string? Pin)
@@ -635,6 +735,7 @@ internal static class Program
             var keep = false;
             var testInput = false;
             var tls = false;
+            var skipControllerFirst = false;
             string? pfxPath = null;
             string? pfxPassword = null;
             string? pin = null;
@@ -654,10 +755,11 @@ internal static class Program
                     case "--keep": keep = true; break;
                     case "--test-input": testInput = true; break;
                     case "--tls": tls = true; break;
+                    case "--skip-cf": skipControllerFirst = true; break;
                 }
             }
 
-            return new Options(port, token, id, relayDir, agentDir, keep, testInput, tls, pfxPath, pfxPassword, pin);
+            return new Options(port, token, id, relayDir, agentDir, keep, testInput, tls, skipControllerFirst, pfxPath, pfxPassword, pin);
         }
     }
 }

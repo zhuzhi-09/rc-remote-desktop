@@ -151,9 +151,8 @@ public sealed class RelaySession
                 }),
                 ct).ConfigureAwait(false);
 
-            // Marks this peer's handshake as complete. Anything that must not overtake the first ack
-            // (geometry updates, heartbeat pings) waits on Ready. Failing to complete it deadlocks
-            // the peer's read loop, which shows up as a socket whose Recv-Q never drains.
+            // Marks this peer's handshake as complete. Heartbeat pings wait on Ready, so failing to
+            // complete it silently disables the heartbeat for this peer.
             peer.Ready.TrySetResult();
             _agentReady.TrySetResult(peer);
             _logger.LogInformation(
@@ -163,6 +162,7 @@ public sealed class RelaySession
             // A controller waiting for this agent gets an updated ack carrying the geometry.
             // Deliberately NOT awaited: the agent's read loop must start immediately so frames are
             // drained from the socket, even if the controller is slow to finish its own handshake.
+            // (Awaiting this inline is what turned a missing Ready into a hard deadlock.)
             var controller = Volatile.Read(ref _controller);
             if (controller is not null)
             {
@@ -230,7 +230,14 @@ public sealed class RelaySession
                 }),
                 ct).ConfigureAwait(false);
 
-            // See the matching comment in RunAgentAsync: Ready must be completed or the peer stalls.
+            // Marks this peer's handshake as complete.
+            //
+            // THIS ONE IS LOAD-BEARING. When an agent joins a session that already has a controller,
+            // RunAgentAsync calls PublishGeometryAsync, which awaits the CONTROLLER's Ready. If that
+            // is never completed the agent's read loop never starts, its socket is never drained, and
+            // the controller sees a permanently frozen screen while both sides report "connected".
+            // tools/Rc.E2E covers exactly this ordering ("controller-first: agent joins existing
+            // session"); keep that check green.
             peer.Ready.TrySetResult();
             _controllerReady.TrySetResult(peer);
             _logger.LogInformation(

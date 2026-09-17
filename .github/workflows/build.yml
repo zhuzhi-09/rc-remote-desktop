@@ -1,0 +1,58 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------- build
+  build:
+    name: build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # TreatWarningsAsErrors keeps the "0 warnings" promise honest. The solution has clean
+      # nullable annotations and we do not want that to rot silently.
+      - name: Restore
+        run: dotnet restore RemoteControl.slnx
+
+      - name: Build (Release, warnings are errors)
+        run: dotnet build RemoteControl.slnx --no-restore -c Release -v m -p:TreatWarningsAsErrors=true
+
+  # ---------------------------------------------------------------- end to end
+  e2e:
+    name: end-to-end
+    runs-on: windows-latest
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The harness resolves the relay/agent binaries from the Debug output paths, so build Debug.
+      - name: Build
+        run: dotnet build RemoteControl.slnx -v m -p:TreatWarningsAsErrors=true
+
+      - name: End-to-end (plain ws)
+        run: dotnet run --project tools/Rc.E2E/Rc.E2E.csproj --no-build -- --port 18201
+
+      - name: End-to-end (wss + certificate pinning)
+        run: dotnet run --project tools/Rc.E2E/Rc.E2E.csproj --no-build -- --tls --port 18202

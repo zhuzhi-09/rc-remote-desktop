@@ -1,5 +1,7 @@
 # Rc —— 自托管远程桌面
 
+[![build](https://github.com/zhuzhi-09/rc-remote-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/zhuzhi-09/rc-remote-desktop/actions/workflows/build.yml)
+
 > 为受限网络设计的自托管远程桌面。被控端只做主动出站连接、零监听端口、不依赖任何第三方服务或 VPN。
 
 被控端**只做主动出站 WSS 连接**，**不监听任何端口**、不使用任何 VPN/组网协议，
@@ -45,19 +47,35 @@
 
 ## 验证状态
 
-`dotnet build RemoteControl.slnx` → **0 错误 0 警告**。
+CI 在每次推送时执行：Release 构建（**警告视为错误**）+ 两种模式下的端到端测试。
 
-`tools/Rc.E2E` 在两种模式（明文 `ws` / `wss` + 证书固定）下全绿：
+`tools/Rc.E2E` 会拉起**真实的中转服务**和**真实的被控端**，用真实协议作为主控端连接并断言：
 
 ```
-PASS  relay /healthz          ok
-PASS  controller handshake    Ok=True 1920x1080 tile=64 peerOnline=True
-PASS  first keyframe          510 tiles, 1920x1080, frameId=29
-PASS  keyframe on demand      frameId 29 -> 30
-PASS  input path              mouse_move injected, socket=Open, agentClean=True
-PASS  frame stream alive      66 frame message(s) in 4s
-PASS  cert pinning enforced   a wrong pinned fingerprint was rejected   (仅 wss)
-PASS  agent log clean         no errors logged
+PASS  relay /healthz                      ok
+PASS  controller handshake                Ok=True 1920x1080 tile=64 peerOnline=True
+PASS  first keyframe                      510 tiles, 1920x1080, frameId=31
+PASS  keyframe on demand                  frameId 31 -> 32
+PASS  input path                          mouse_move injected, socket=Open, agentClean=True
+PASS  frame stream alive                  59 frame message(s) in 4s
+PASS  cert pinning enforced               a wrong pinned fingerprint was rejected   (仅 wss)
+PASS  agent log clean                     no errors logged
+PASS  controller-first: controller online with no agent   Ok=True peerOnline=False screen=0x0
+PASS  controller-first: agent joins existing session      keyframe after 449ms, 510 tiles
+```
+
+最后两条是**回归测试**，专门覆盖一个曾经把画面卡死的真实缺陷：
+
+> 主控端**先**上线、被控端**后**加入同一个会话时，`RelaySession` 里一个未完成的
+> `TaskCompletionSource` 会让被控端的读循环永远不启动 —— 两端都显示"已连接"，
+> 但被控端 socket 的 `Recv-Q` 会涨到数 MB 后冻结，画面全黑。
+
+常见的连接顺序（被控端先连）恰好绕开这条路径，所以必须单独覆盖。
+
+本地跑：
+
+```powershell
+.\build.ps1 -Task e2e     # ws 一轮 + wss 一轮
 ```
 
 ## 设计要点
@@ -68,6 +86,9 @@ PASS  agent log clean         no errors logged
   用 Let's Encrypt 时改为依赖系统信任链（证书会轮换，不可固定）。
 - **省带宽**：屏幕切成 64×64 块做增量比对，只对变化的块做 JPEG 编码；
   发送端单槽背压，发不过来就丢旧帧，永远发最新画面。
+- **本地可控**：被控端有一个可见的状态窗口和「暂停共享」开关。暂停期间**完全不采集屏幕、
+  不发送任何数据**；连接保留以便远端重新连上。托盘菜单提供同样的开关，
+  配置项 `showWindow` / `startPaused` 可决定窗口是否显示、启动时是否即处于暂停。
 - **弱网**：两端都带指数退避重连 + Ping/Pong 心跳超时判定。
 
 ## 已知限制
