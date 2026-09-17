@@ -2,6 +2,8 @@
 
 [![build](https://github.com/zhuzhi-09/rc-remote-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/zhuzhi-09/rc-remote-desktop/actions/workflows/build.yml)
 
+![Rc —— 自托管远程桌面](docs/cover.png)
+
 > 为受限网络设计的自托管远程桌面。被控端只做主动出站连接、零监听端口、不依赖任何第三方服务或 VPN。
 
 被控端**只做主动出站 WSS 连接**，**不监听任何端口**、不使用任何 VPN/组网协议，
