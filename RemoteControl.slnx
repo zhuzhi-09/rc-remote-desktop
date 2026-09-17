@@ -5,4 +5,7 @@
     <Project Path="src/Rc.Protocol/Rc.Protocol.csproj" />
     <Project Path="src/Rc.Relay/Rc.Relay.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Rc.E2E/Rc.E2E.csproj" />
+  </Folder>
 </Solution>
