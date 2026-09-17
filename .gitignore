@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------- build outputs
+bin/
+obj/
+publish/
+*.user
+*.suo
+.vs/
+*.pdb
+*.staticwebassets.endpoints.json
+
+# ---------------------------------------------------------------- secrets & local config
+# These carry the real relay URL, the shared token and the pinned certificate fingerprint.
+# They must NEVER be committed.
+**/agent.config.json
+**/controller.config.json
+src/Rc.Relay/appsettings.Development.json
+*.pfx
+*.pem
+*.key
+*.crt
+
+# ---------------------------------------------------------------- runtime junk
+*.log
+*.gz
+*.tar
+*.zip
+Thumbs.db
+.DS_Store
+
+# ---------------------------------------------------------------- local tooling
+.omo/
+.idea/
+.vscode/

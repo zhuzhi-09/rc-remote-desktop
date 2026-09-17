@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Rc.E2E</RootNamespace>
+    <AssemblyName>rce2e</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Rc.Protocol\Rc.Protocol.csproj" />
+  </ItemGroup>
+</Project>

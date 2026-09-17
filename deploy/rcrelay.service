@@ -1,0 +1,27 @@
+[Unit]
+Description=Rc Relay (self-hosted remote desktop relay)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/rcrelay
+ExecStart=/opt/rcrelay/rcrelay
+# Token 通过环境变量注入，覆盖 appsettings.json 中的 Relay:Token
+Environment=Relay__Token=CHANGE_ME_STRONG_RANDOM
+# 只监听本机，由 Caddy / nginx 负责对外 TLS
+# 注意：appsettings.json 里有 Kestrel:Endpoints，它会覆盖 ASPNETCORE_URLS，
+#       所以这里必须覆盖同一个配置键（Kestrel__Endpoints__Http__Url）才生效。
+Environment=Kestrel__Endpoints__Http__Url=http://127.0.0.1:8080
+Environment=DOTNET_ENVIRONMENT=Production
+Restart=always
+RestartSec=3
+# 降低权限（按需创建该用户：useradd -r -s /usr/sbin/nologin rcrelay）
+User=rcrelay
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

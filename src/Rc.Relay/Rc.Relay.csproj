@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>rcrelay</AssemblyName>
+    <RootNamespace>Rc.Relay</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rc.Protocol\Rc.Protocol.csproj" />
+  </ItemGroup>
+</Project>

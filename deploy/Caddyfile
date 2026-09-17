@@ -1,0 +1,44 @@
+# Rc 中转服务的反向代理配置
+#
+# 作用：
+#   1. 由 Caddy 自动申请并续期 Let's Encrypt 证书（你只需求把域名 A 记录指向 VPS）
+#   2. 把 /agent 与 /control 的 WebSocket 流量反代到本机的 rcrelay (127.0.0.1:8080)
+#   3. 其余路径返回一个"正常的网站"诱饵页，避免被网络管理员随手点开就看出异常
+#
+# 使用前：
+#   - 把 rc.example.com 换成你自己的域名
+#   - 把诱饵页放到 /var/www/decoy（见 deploy/decoy/index.html）
+#
+# 安装 Caddy 后把本文件放到 /etc/caddy/Caddyfile，然后 systemctl reload caddy
+
+rc.example.com {
+	encode zstd gzip
+
+	# 只把这两个路径当作 WebSocket 反代（Caddy 会自动处理 Upgrade 头）
+	@ws path /agent /control
+	handle @ws {
+		reverse_proxy 127.0.0.1:8080 {
+			# 远程桌面是长连接，不要设空闲超时
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+
+	# 健康检查（可选，用于监控）
+	handle /healthz {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# 其余请求 -> 诱饵站点
+	handle {
+		root * /var/www/decoy
+		file_server
+	}
+
+	log {
+		output file /var/log/caddy/rc.log
+		level INFO
+	}
+}

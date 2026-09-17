@@ -1,0 +1,16 @@
+# Line endings: the shell scripts MUST stay LF or they will not run on Linux.
+* text=auto
+*.sh   text eol=lf
+*.bash text eol=lf
+*.cs   text eol=crlf
+*.ps1  text eol=crlf
+*.cmd  text eol=crlf
+*.csproj text eol=crlf
+*.slnx   text eol=crlf
+
+# Never treat these as text
+*.png binary
+*.jpg binary
+*.ico binary
+*.pfx binary
+*.gz  binary
