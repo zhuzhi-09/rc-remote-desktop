@@ -18,9 +18,12 @@ public sealed class AgentWindow : Form
     private readonly Label _sharingLabel;
     private readonly Label _hintLabel;
     private readonly Button _toggleButton;
+    private readonly CheckBox _autostartCheck;
     private readonly Font _toggleFont;
 
     private bool _sharing;
+    private bool _autostartReverting;
+    private string _state = "Starting";
     private bool _trayHintShown;
     private NotifyIcon? _trayHint;
     private System.Windows.Forms.Timer? _trayHintTimer;
@@ -34,7 +37,7 @@ public sealed class AgentWindow : Form
         MinimizeBox = true;
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
-        ClientSize = new Size(414, 264);
+        ClientSize = new Size(414, 292);
 
         _toggleFont = new Font(Font.FontFamily, 12F, FontStyle.Bold);
 
@@ -67,6 +70,16 @@ public sealed class AgentWindow : Form
             Text = "暂停后本机画面将不再被采集，也不会发送给远端。",
             Margin = new Padding(0),
         };
+
+        // Set before subscribing, so initializing from the registry never raises CheckedChanged.
+        _autostartCheck = new CheckBox
+        {
+            AutoSize = true,
+            Text = "开机自动启动",
+            Margin = new Padding(0, 4, 0, 2),
+            Checked = Autostart.IsEnabled(),
+        };
+        _autostartCheck.CheckedChanged += OnAutostartChanged;
 
         var bottom = new FlowLayoutPanel
         {
@@ -102,20 +115,22 @@ public sealed class AgentWindow : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(16, 14, 16, 12),
             ColumnCount = 1,
-            RowCount = 5,
+            RowCount = 6,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
 
         layout.Controls.Add(_statusLabel, 0, 0);
         layout.Controls.Add(_sharingLabel, 0, 1);
         layout.Controls.Add(_toggleButton, 0, 2);
-        layout.Controls.Add(_hintLabel, 0, 3);
-        layout.Controls.Add(bottom, 0, 4);
+        layout.Controls.Add(_autostartCheck, 0, 3);
+        layout.Controls.Add(_hintLabel, 0, 4);
+        layout.Controls.Add(bottom, 0, 5);
         Controls.Add(layout);
 
         SetSharing(sharingEnabled);
@@ -154,7 +169,61 @@ public sealed class AgentWindow : Form
             return;
         }
 
+        _state = state;
+        _statusLabel.ForeColor = SystemColors.ControlText;
         _statusLabel.Text = "连接状态：" + LocalizeState(state);
+    }
+
+    /// <summary>
+    /// Applies the auto-start checkbox. The registry write is fast; on failure the checkbox is
+    /// reverted with the change notification suppressed and the reason is shown in the status label.
+    /// </summary>
+    private void OnAutostartChanged(object? sender, EventArgs e)
+    {
+        if (_autostartReverting)
+        {
+            return;
+        }
+
+        var desired = _autostartCheck.Checked;
+        try
+        {
+            if (Autostart.TrySet(desired, out var error))
+            {
+                SetStatus(_state);
+                return;
+            }
+
+            RevertAutostartCheck(!desired);
+            ShowAutostartError(error);
+        }
+        catch (Exception ex)
+        {
+            // Registry/IO failures are reported through the TrySet error path, but never let an
+            // unexpected one escape the UI thread.
+            RevertAutostartCheck(!desired);
+            ShowAutostartError("无法修改开机自动启动设置：" + ex.Message);
+            Log.Warn($"Failed to change the auto-start setting: {ex.Message}");
+        }
+    }
+
+    private void RevertAutostartCheck(bool value)
+    {
+        _autostartReverting = true;
+        try
+        {
+            _autostartCheck.Checked = value;
+        }
+        finally
+        {
+            _autostartReverting = false;
+        }
+    }
+
+    private void ShowAutostartError(string message)
+    {
+        _statusLabel.Text = message;
+        _statusLabel.ForeColor = Color.Firebrick;
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
