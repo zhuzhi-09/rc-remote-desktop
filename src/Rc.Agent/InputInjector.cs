@@ -26,6 +26,10 @@ public static class InputInjector
     private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint KEYEVENTF_SCANCODE = 0x0008;
+    private const uint KEYEVENTF_UNICODE = 0x0004;
+
+    /// <summary>Cap on a single text injection so a hostile peer cannot wedge the input queue.</summary>
+    private const int MaxTextLength = 4096;
 
     private const uint MAPVK_VK_TO_VSC = 0;
 
@@ -158,6 +162,41 @@ public static class InputInjector
                     wVk = 0,
                     wScan = scan,
                     dwFlags = flags,
+                    time = 0,
+                    dwExtraInfo = IntPtr.Zero,
+                },
+            },
+        };
+        Send(input);
+    }
+
+    /// <summary>
+    /// Types literal text with KEYEVENTF_UNICODE, which bypasses the keyboard layout entirely.
+    /// This is what makes IME-composed Chinese, emoji and non-US layouts work: none of them can be
+    /// represented by a Windows virtual-key code.
+    /// </summary>
+    public static void Text(string text)
+    {
+        var limit = Math.Min(text.Length, MaxTextLength);
+        for (var i = 0; i < limit; i++)
+        {
+            SendUnicodeUnit(text[i], down: true);
+            SendUnicodeUnit(text[i], down: false);
+        }
+    }
+
+    private static void SendUnicodeUnit(char unit, bool down)
+    {
+        var input = new INPUT
+        {
+            type = INPUT_KEYBOARD,
+            u = new InputUnion
+            {
+                ki = new KEYBDINPUT
+                {
+                    wVk = 0,
+                    wScan = unit,
+                    dwFlags = KEYEVENTF_UNICODE | (down ? 0u : KEYEVENTF_KEYUP),
                     time = 0,
                     dwExtraInfo = IntPtr.Zero,
                 },

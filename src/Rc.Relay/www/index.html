@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0b0d">
+<meta name="referrer" content="no-referrer">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rc 远程桌面">
+<title>Rc 远程桌面</title>
+<!-- Absolute asset paths on purpose. The relay serves this client only at /app, and a RELATIVE href
+     makes Chrome's speculative preload scanner fetch /app.css and /app.js from the document root
+     before the parser has run any <base> correction - harmless but it fills the console with 404s.
+     The data: icon does the same job for the automatic /favicon.ico request. -->
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/app/app.css">
+</head>
+<body>
+
+<!-- ======================================================== 1. 连接界面 -->
+<main id="connect-screen" class="screen screen--connect">
+  <div class="connect">
+
+    <header class="brand">
+      <span class="brand__mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2.5" y="4" width="19" height="12.5" rx="2"></rect>
+          <path d="M8.5 20.5h7M12 16.5v4"></path>
+        </svg>
+      </span>
+      <span class="brand__text">
+        <h1 class="brand__title">Rc 远程桌面</h1>
+        <p class="brand__sub">用手机浏览器控制你的 Windows 电脑</p>
+      </span>
+    </header>
+
+    <form id="connect-form" class="card" novalidate autocomplete="on">
+      <div class="field">
+        <label class="field__label" for="input-agent">被控端 ID</label>
+        <input id="input-agent" class="input" type="text" name="agentId" inputmode="text"
+               maxlength="64" autocomplete="username" autocapitalize="off" autocorrect="off"
+               spellcheck="false" placeholder="例如 office-pc">
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="input-token">令牌</label>
+        <input id="input-token" class="input" type="password" name="token"
+               autocomplete="current-password" placeholder="访问令牌">
+      </div>
+
+      <p id="connect-error" class="alert alert--inline" role="alert" aria-live="assertive" hidden></p>
+
+      <button id="btn-connect" class="btn btn--primary btn--block" type="submit">连接</button>
+    </form>
+
+    <p class="footnote">
+      ID 与令牌只保存在本机浏览器，连接走当前页面的同源 WSS 通道。
+    </p>
+  </div>
+</main>
+
+<!-- ======================================================== 2. 会话界面 -->
+<section id="session-screen" class="screen screen--session" hidden>
+
+  <div id="stage" class="stage">
+    <canvas id="screen" class="stage__canvas"></canvas>
+
+    <div id="waiting" class="waiting" hidden>
+      <span class="waiting__ring" aria-hidden="true"></span>
+      <p class="waiting__text">等待被控端…</p>
+    </div>
+
+    <div id="status" class="status" role="status" aria-live="polite">
+      <span id="status-dot" class="status__dot"></span>
+      <span id="status-state" class="status__state">未连接</span>
+      <span class="status__sep" aria-hidden="true"></span>
+      <span id="status-geometry" class="status__num">--</span>
+      <span class="status__sep" aria-hidden="true"></span>
+      <span id="status-fps" class="status__num">0 fps</span>
+    </div>
+
+    <p id="session-error" class="alert alert--overlay" role="alert" hidden></p>
+  </div>
+
+  <div id="toolbar" class="toolbar">
+    <button id="toolbar-toggle" class="toolbar__handle" type="button"
+            aria-expanded="true" aria-controls="toolbar-body">
+      <svg class="toolbar__chevron" viewBox="0 0 24 24" width="16" height="16" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+      <span>工具栏</span>
+    </button>
+
+    <div id="toolbar-body" class="toolbar__body">
+
+      <div class="row row--controls">
+        <label class="ctl">
+          <span class="ctl__label">画质</span>
+          <select id="sel-quality" class="select">
+            <option value="95">95</option>
+            <option value="75">75</option>
+            <option value="55">55</option>
+            <option value="40">40</option>
+          </select>
+        </label>
+
+        <label class="ctl">
+          <span class="ctl__label">缩放</span>
+          <select id="sel-scale" class="select">
+            <option value="100">100%</option>
+            <option value="75">75%</option>
+            <option value="50">50%</option>
+          </select>
+        </label>
+
+        <button id="btn-keyframe" class="btn btn--ghost" type="button">重发关键帧</button>
+        <button id="btn-drag" class="btn btn--ghost" type="button" aria-pressed="false">拖拽</button>
+        <button id="btn-disconnect" class="btn btn--danger" type="button">断开</button>
+      </div>
+
+      <div id="keys" class="row row--keys">
+        <button class="btn btn--key" type="button" data-key="esc" data-vk="27" data-ext="0">Esc</button>
+        <button class="btn btn--key" type="button" data-key="tab" data-vk="9" data-ext="0">Tab</button>
+        <button class="btn btn--key" type="button" data-key="enter" data-vk="13" data-ext="0">Enter</button>
+        <button class="btn btn--key" type="button" data-key="backspace" data-vk="8" data-ext="0">Backspace</button>
+        <button class="btn btn--key" type="button" data-key="delete" data-vk="46" data-ext="1">Del</button>
+        <button class="btn btn--key" type="button" data-key="cad" data-combo="cad">Ctrl+Alt+Del</button>
+        <button class="btn btn--key" type="button" data-key="win" data-vk="91" data-ext="0">Win</button>
+        <button class="btn btn--key" type="button" data-key="up" data-vk="38" data-ext="1">↑</button>
+        <button class="btn btn--key" type="button" data-key="down" data-vk="40" data-ext="1">↓</button>
+        <button class="btn btn--key" type="button" data-key="left" data-vk="37" data-ext="1">←</button>
+        <button class="btn btn--key" type="button" data-key="right" data-vk="39" data-ext="1">→</button>
+      </div>
+
+      <div class="row row--text">
+        <input id="input-text" class="input input--inline" type="text" inputmode="text"
+               autocomplete="off" autocapitalize="sentences" autocorrect="off" spellcheck="false"
+               enterkeyhint="send" placeholder="输入文字后回车发送（支持中文输入法）">
+        <button id="btn-send" class="btn btn--primary" type="button">发送</button>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<script src="/app/app.js" defer></script>
+</body>
+</html>

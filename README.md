@@ -18,6 +18,24 @@
 
 三个组件共用 `Rc.Protocol`（消息定义 + 帧编解码 + 自带证书固定的 WSS 客户端）。
 
+## 手机客户端（零安装）
+
+中转服务自带一个手机网页客户端，手机浏览器打开
+
+```
+https://<中转地址>:<端口>/app
+```
+
+即可使用。**不需要安装 App，Android / iOS 通用**，也无需任何构建工具链。
+
+- 首次访问需要在浏览器里手动接受一次自签证书警告
+- 填入被控端 ID 与令牌即可连接（会记在 localStorage，下次自动填好）
+- 触摸操作：**点击** = 左键单击，**长按** = 右键，**单指拖动** = 平移视图，
+  **双指捏合** = 缩放，**双指上下滑** = 滚轮；另有「拖拽」开关用于移动窗口 / 选中文本
+- 底部工具栏提供 Esc / Tab / Enter / Backspace / Del / Ctrl+Alt+Del / Win / 方向键
+- 文本输入框走系统输入法，**中文、emoji 都能用** —— 这些字符无法用 Windows 虚拟键码表示，
+  协议里专门有一条 `InputKind.Text`，被控端以 `KEYEVENTF_UNICODE` 注入
+
 ## 快速开始
 
 ```powershell
@@ -40,6 +58,7 @@
 |---|---|
 | `src/Rc.Protocol` | 共享协议：消息、帧编解码、自带证书固定与 TCP_NODELAY 的 WSS 客户端 |
 | `src/Rc.Relay` | 中转服务（ASP.NET Core，可跑 Linux VPS / NAS / Docker） |
+| `src/Rc.Relay/www` | 手机网页客户端（纯 HTML/CSS/JS，无框架无构建，嵌入在中转服务里） |
 | `src/Rc.Agent` | 被控端（Windows 托盘程序，出站连接，零监听端口） |
 | `src/Rc.Controller` | 主控端（Windows 图形界面，深色主题） |
 | `tools/Rc.E2E` | 端到端自动化测试：拉起真实中转 + 真实被控端，用真实协议断言 |

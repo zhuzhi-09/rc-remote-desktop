@@ -8,4 +8,13 @@
   <ItemGroup>
     <ProjectReference Include="..\Rc.Protocol\Rc.Protocol.csproj" />
   </ItemGroup>
+
+  <!--
+    The mobile web client lives in www/ (deliberately NOT wwwroot, so the Web SDK's static-asset
+    pipeline stays out of the way) and is embedded so the self-contained single-file publish still
+    serves it. Resource names become Rc.Relay.www.<file>.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="www\**\*" />
+  </ItemGroup>
 </Project>

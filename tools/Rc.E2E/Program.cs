@@ -200,6 +200,23 @@ internal static class Program
                     $"mouse_move injected ({(opt.TestInput ? "cursor moved to centre" : "cursor unchanged")}), socket={ws.Socket.State}, agentClean={clean}"));
             }
 
+            // Text injection plumbing (the mobile web client depends on InputKind.Text).
+            // By default we send an EMPTY string, which the agent deliberately ignores: that proves
+            // the message is parsed and routed without typing anything into whatever window happens
+            // to be focused on the machine running the tests. --test-input sends real characters.
+            var probeText = opt.TestInput ? "rc" : "";
+            await WsFraming.SendJsonAsync(ws.Socket, MsgType.Input, new InputMessage
+            {
+                Kind = InputKind.Text,
+                Text = probeText,
+            }, cts.Token);
+            await Task.Delay(400);
+            var textClean = ReadAgentErrors(agentWorkDir) is null;
+            results.Add((ws.Socket.State == WebSocketState.Open && textClean, "text input plumbing",
+                opt.TestInput
+                    ? "typed \"rc\" - check the focused window"
+                    : $"empty text accepted, nothing typed, agentClean={textClean}"));
+
             // MUST stay last among the checks that use this socket: cancelling a pending
             // WebSocket.ReceiveAsync aborts the connection (ManagedWebSocket behaviour), so after this
             // point the socket can no longer be used.

@@ -317,6 +317,12 @@ public sealed class AgentConnection : IDisposable
                 case InputKind.KeyUp:
                     InputInjector.Key(message.Vk, down: false, message.Extended);
                     break;
+                case InputKind.Text:
+                    if (!string.IsNullOrEmpty(message.Text))
+                    {
+                        InputInjector.Text(message.Text);
+                    }
+                    break;
                 default:
                     Log.Warn($"Unknown input kind '{message.Kind}'.");
                     break;

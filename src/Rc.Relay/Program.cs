@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -63,6 +64,13 @@ app.MapGet("/healthz", () => Results.Text("ok", "text/plain"));
 app.MapGet("/agent", (HttpContext context) => HandleSocketAsync(context, Role.Agent, idPattern));
 app.MapGet("/control", (HttpContext context) => HandleSocketAsync(context, Role.Control, idPattern));
 
+// Mobile web client. Served from embedded resources so the single-file publish keeps working.
+// NOTE: do NOT also map "/app/" - ASP.NET Core treats a trailing slash as equivalent, and two
+// templates would collide with an AmbiguousMatchException at request time.
+app.MapGet("/app", () => ServeWebAsset("index.html"));
+app.MapGet("/app/app.js", () => ServeWebAsset("app.js"));
+app.MapGet("/app/app.css", () => ServeWebAsset("app.css"));
+
 app.Logger.LogInformation(
     "rcrelay ready: maxMessageBytes={MaxMessageBytes}, sessionTimeout={SessionTimeout}s, keepAlive=15s, ping=15s.",
     relayOptions.MaxMessageBytes, relayOptions.SessionTimeoutSeconds);
@@ -100,11 +108,19 @@ static async Task HandleSocketAsync(HttpContext context, string role, Regex idPa
         return;
     }
 
-    if (!TokenMatches(context.Request.Headers["X-RC-Token"], options.Token))
+    // Browsers cannot set custom headers on a WebSocket, so the web client passes the token as a
+    // query parameter. Both forms are accepted; the header takes precedence.
+    var providedToken = context.Request.Headers["X-RC-Token"].ToString();
+    if (string.IsNullOrEmpty(providedToken))
     {
-        logger.LogWarning("Rejected {Role} (id={Id}, remote={Remote}): bad or missing X-RC-Token.", role, id, context.Connection.RemoteIpAddress);
+        providedToken = context.Request.Query["token"].ToString();
+    }
+
+    if (!TokenMatches(providedToken, options.Token))
+    {
+        logger.LogWarning("Rejected {Role} (id={Id}, remote={Remote}): bad or missing token.", role, id, context.Connection.RemoteIpAddress);
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        await context.Response.WriteAsync("Invalid or missing X-RC-Token header.");
+        await context.Response.WriteAsync("Invalid or missing token.");
         return;
     }
 
@@ -151,4 +167,26 @@ static bool TokenMatches(string? provided, string expected)
     return CryptographicOperations.FixedTimeEquals(
         Encoding.UTF8.GetBytes(provided),
         Encoding.UTF8.GetBytes(expected));
+}
+
+/// <summary>Serves one file of the embedded mobile web client.</summary>
+static IResult ServeWebAsset(string fileName)
+{
+    var assembly = Assembly.GetExecutingAssembly();
+    var suffix = "." + fileName;
+    var resource = assembly.GetManifestResourceNames()
+        .FirstOrDefault(name => name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
+    if (resource is null)
+    {
+        return Results.NotFound();
+    }
+
+    var contentType = Path.GetExtension(fileName).ToLowerInvariant() switch
+    {
+        ".js" => "text/javascript; charset=utf-8",
+        ".css" => "text/css; charset=utf-8",
+        _ => "text/html; charset=utf-8",
+    };
+
+    return Results.Stream(assembly.GetManifestResourceStream(resource)!, contentType);
 }

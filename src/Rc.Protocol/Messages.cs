@@ -78,6 +78,13 @@ public static class InputKind
     public const string Wheel = "wheel";
     public const string KeyDown = "key_down";
     public const string KeyUp = "key_up";
+
+    /// <summary>
+    /// Inject literal text for <see cref="InputMessage.Text"/>. Needed because soft keyboards and
+    /// IME-composed input (Chinese, emoji, non-US layouts) never produce Windows virtual-key codes.
+    /// The agent injects it with KEYEVENTF_UNICODE.
+    /// </summary>
+    public const string Text = "text";
 }
 
 public static class MouseButton
@@ -109,6 +116,9 @@ public sealed class InputMessage
 
     /// <summary>True for extended keys (arrows, right ctrl/alt, numpad enter...).</summary>
     public bool Extended { get; set; }
+
+    /// <summary>Literal text to type, used with <see cref="InputKind.Text"/>.</summary>
+    public string? Text { get; set; }
 }
 
 public static class ControlKind
