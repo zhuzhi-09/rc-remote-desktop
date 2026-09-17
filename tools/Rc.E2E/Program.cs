@@ -22,6 +22,9 @@ namespace Rc.E2E;
 /// </summary>
 internal static class Program
 {
+    /// <summary>Coalesced keyframes must land far below the raw tile count (510 for 1920x1080).</summary>
+    private const int MaxKeyframeRegions = 60;
+
     private static async Task<int> Main(string[] args)
     {
         var opt = Options.Parse(args);
@@ -162,9 +165,9 @@ internal static class Program
             }
             else
             {
-                var (packet, problem) = ValidatePacket(firstKeyframe, ack);
+                var (_, problem, detail) = ValidatePacket(firstKeyframe, ack);
                 results.Add((problem is null, "first keyframe",
-                    problem ?? $"{packet.Tiles.Count} tiles, {packet.FrameWidth}x{packet.FrameHeight}, frameId={packet.FrameId}"));
+                    problem is null ? detail : $"{problem} | {detail}"));
             }
 
             await WsFraming.SendJsonAsync(ws.Socket, MsgType.Control,
@@ -320,9 +323,11 @@ internal static class Program
                     {
                         // Pass a null ack: the only ack this socket saw predates the agent, so its 0x0
                         // geometry must not be cross-checked against the real frame size.
-                        var (_, problem) = ValidatePacket(cfKeyframe, null);
+                        var (_, problem, detail) = ValidatePacket(cfKeyframe, null);
                         results.Add((problem is null, "controller-first: agent joins existing session",
-                            problem ?? $"keyframe after {cfStart.ElapsedMilliseconds}ms, {cfKeyframe.Tiles.Count} tiles"));
+                            problem is null
+                                ? $"keyframe after {cfStart.ElapsedMilliseconds}ms, {detail}"
+                                : $"{problem} | {detail}"));
                     }
                 }
                 catch (Exception ex)
@@ -523,45 +528,137 @@ internal static class Program
         return count;
     }
 
-    /// <summary>Returns null when the packet is well-formed, otherwise a description of the defect.</summary>
-    private static (FramePacket Packet, string? Problem) ValidatePacket(FramePacket packet, HelloAckMessage? ack)
+    /// <summary>
+    /// Validates a keyframe end to end: geometry, coalescing (a handful of regions, not one per
+    /// 64px tile), exact coverage of the frame with no overlap, and per-region image payload validity.
+    /// Returns null <c>Problem</c> when well-formed, plus a human-readable <c>Detail</c> for the report.
+    /// </summary>
+    private static (FramePacket Packet, string? Problem, string Detail) ValidatePacket(FramePacket packet, HelloAckMessage? ack)
     {
         if (packet.FrameWidth <= 0 || packet.FrameHeight <= 0)
         {
-            return (packet, $"bad frame geometry {packet.FrameWidth}x{packet.FrameHeight}");
+            return (packet, $"bad frame geometry {packet.FrameWidth}x{packet.FrameHeight}", "no regions");
         }
         if (packet.TileSize != 64)
         {
-            return (packet, $"unexpected tile size {packet.TileSize}");
+            return (packet, $"unexpected tile size {packet.TileSize}", "no regions");
         }
         if (packet.Tiles.Count == 0)
         {
-            return (packet, "keyframe carried zero tiles");
+            return (packet, "keyframe carried zero tiles", "0 regions");
         }
         if (ack is not null && (packet.FrameWidth != ack.ScreenWidth || packet.FrameHeight != ack.ScreenHeight))
         {
-            return (packet, $"frame geometry {packet.FrameWidth}x{packet.FrameHeight} disagrees with HelloAck {ack.ScreenWidth}x{ack.ScreenHeight}");
+            return (packet, $"frame geometry {packet.FrameWidth}x{packet.FrameHeight} disagrees with HelloAck {ack.ScreenWidth}x{ack.ScreenHeight}", "no regions");
         }
+
+        // Boolean coverage grid over tile-sized cells. A coalesced region may span many cells, so its
+        // pixel rectangle is expanded back to the cell range it touches.
+        var tilesX = (packet.FrameWidth + packet.TileSize - 1) / packet.TileSize;
+        var tilesY = (packet.FrameHeight + packet.TileSize - 1) / packet.TileSize;
+        var totalCells = tilesX * tilesY;
+        var covered = new bool[totalCells];
+        var coveredCount = 0;
+        var overlapping = 0;
+        string? problem = null;
 
         foreach (var tile in packet.Tiles)
         {
             if (tile.GridX < 0 || tile.GridY < 0 || tile.Width <= 0 || tile.Height <= 0)
             {
-                return (packet, $"tile {tile.GridX},{tile.GridY} has invalid geometry");
+                problem ??= $"tile {tile.GridX},{tile.GridY} has invalid geometry";
+                continue;
             }
             if ((tile.GridX + 1) * packet.TileSize > packet.FrameWidth + packet.TileSize ||
                 (tile.GridY + 1) * packet.TileSize > packet.FrameHeight + packet.TileSize)
             {
-                return (packet, $"tile {tile.GridX},{tile.GridY} lies outside the frame");
+                problem ??= $"tile {tile.GridX},{tile.GridY} lies outside the frame";
             }
-            if (tile.Jpeg.Length < 4 || tile.Jpeg[0] != 0xFF || tile.Jpeg[1] != 0xD8 ||
-                tile.Jpeg[^2] != 0xFF || tile.Jpeg[^1] != 0xD9)
+
+            var right = tile.GridX * packet.TileSize + tile.Width;
+            var bottom = tile.GridY * packet.TileSize + tile.Height;
+            if (right > packet.FrameWidth || bottom > packet.FrameHeight)
             {
-                return (packet, $"tile {tile.GridX},{tile.GridY} is not a JPEG (SOI/EOI markers missing)");
+                problem ??= $"region {tile.GridX},{tile.GridY} extends past the frame edge";
+            }
+
+            problem ??= CheckPayload(tile);
+
+            var cellX0 = Math.Max(0, tile.GridX);
+            var cellY0 = Math.Max(0, tile.GridY);
+            var cellX1 = Math.Min(tilesX - 1, (right + packet.TileSize - 1) / packet.TileSize - 1);
+            var cellY1 = Math.Min(tilesY - 1, (bottom + packet.TileSize - 1) / packet.TileSize - 1);
+            for (var cy = cellY0; cy <= cellY1; cy++)
+            {
+                var cellBase = cy * tilesX;
+                for (var cx = cellX0; cx <= cellX1; cx++)
+                {
+                    if (covered[cellBase + cx])
+                    {
+                        overlapping++;
+                    }
+                    else
+                    {
+                        covered[cellBase + cx] = true;
+                        coveredCount++;
+                    }
+                }
             }
         }
 
-        return (packet, null);
+        // Coalescing must fold the screen into far fewer regions than the raw 64px tile count.
+        if (packet.Tiles.Count > MaxKeyframeRegions)
+        {
+            problem ??= $"{packet.Tiles.Count} regions exceeds the {MaxKeyframeRegions} ceiling (coalescing not applied?)";
+        }
+        if (coveredCount != totalCells)
+        {
+            problem ??= $"coverage {coveredCount}/{totalCells} cells (keyframe has gaps)";
+        }
+        if (overlapping != 0)
+        {
+            problem ??= $"{overlapping} overlapping keyframe cell(s)";
+        }
+
+        var overlapText = overlapping > 0 ? $", {overlapping} overlaps" : "";
+        var detail =
+            $"{packet.Tiles.Count} regions (<= {MaxKeyframeRegions}) for {totalCells} {packet.TileSize}px tiles, " +
+            $"coverage {coveredCount}/{totalCells}{overlapText}, {packet.FrameWidth}x{packet.FrameHeight}, frameId={packet.FrameId}";
+
+        return (packet, problem, detail);
+    }
+
+    /// <summary>
+    /// The wire format carries no image-type field, so the encoder is free to pick JPEG or PNG. Key
+    /// off the first magic byte: FF = JPEG (must end with EOI), 89 = PNG (must be \x89PNG).
+    /// </summary>
+    private static string? CheckPayload(Tile tile)
+    {
+        var bytes = tile.Jpeg;
+        if (bytes.Length < 4)
+        {
+            return $"tile {tile.GridX},{tile.GridY} payload is too short";
+        }
+
+        if (bytes[0] == 0x89)
+        {
+            if (bytes[1] != 0x50 || bytes[2] != 0x4E || bytes[3] != 0x47)
+            {
+                return $"tile {tile.GridX},{tile.GridY} has an unknown payload (first byte 0x89 is not PNG)";
+            }
+            return null;
+        }
+
+        if (bytes[0] == 0xFF)
+        {
+            if (bytes[1] != 0xD8 || bytes[^2] != 0xFF || bytes[^1] != 0xD9)
+            {
+                return $"tile {tile.GridX},{tile.GridY} is not a JPEG (SOI/EOI markers missing)";
+            }
+            return null;
+        }
+
+        return $"tile {tile.GridX},{tile.GridY} payload is neither JPEG nor PNG";
     }
 
     private static string? ReadAgentErrors(string agentWorkDir)

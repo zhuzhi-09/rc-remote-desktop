@@ -134,7 +134,9 @@
     reconnectTimer: 0,
     keyframeAt: 0,
     dragMode: false,
-    quality: 75,
+    /* 默认无损：桌面内容多为纯色块与文字，PNG 在这种内容上既没有压缩伪影，
+       实测单帧还比 JPEG q95 更小。滚动场景若嫌卡，在工具栏下调一档即可。 */
+    quality: 100,
     remoteScale: 100,
     fps: 0,
     frameTimes: [],
@@ -418,7 +420,7 @@
     dirty = true;
   }
 
-  function decodeJpeg(blob) {
+  function decodeImage(blob) {
     if (typeof createImageBitmap === "function") {
       return createImageBitmap(blob);
     }
@@ -427,9 +429,19 @@
       var url = URL.createObjectURL(blob);
       var img = new Image();
       img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
-      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("JPEG 解码失败")); };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("图像解码失败")); };
       img.src = url;
     });
+  }
+
+  /* 被控端会按画质选择编码格式（画质=100 时用无损 PNG），而载荷里没有格式字段，
+     因此只能嗅探魔数：89 50 4E 47 = PNG，FF D8 = JPEG。 */
+  function imageMimeType(bytes) {
+    if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 &&
+        bytes[2] === 0x4E && bytes[3] === 0x47) {
+      return "image/png";
+    }
+    return "image/jpeg";
   }
 
   function drawTile(bitmap, px, py, w, h, frameW, frameH) {
@@ -472,8 +484,8 @@
 
   function decodeTile(tile) {
     inflight++;
-    var blob = new Blob([tile.jpeg], { type: "image/jpeg" });
-    decodeJpeg(blob).then(function (bitmap) {
+    var blob = new Blob([tile.jpeg], { type: imageMimeType(tile.jpeg) });
+    decodeImage(blob).then(function (bitmap) {
       /* 按到达顺序上屏；回调保证不抛异常，否则整条绘制链会永久中断 */
       drawChain = drawChain.then(function () {
         try {
@@ -490,7 +502,7 @@
       inflight--;
       pumpTiles();
     }, function () {
-      /* 单块 JPEG 解码失败不值得打断会话：等下一次关键帧 */
+      /* 单块图像解码失败不值得打断会话：等下一次关键帧 */
       inflight--;
       pumpTiles();
     });
@@ -1172,7 +1184,7 @@
     if (!prefs || typeof prefs !== "object") { return; }
     if (typeof prefs.id === "string") { inputAgent.value = prefs.id; }
     if (typeof prefs.token === "string") { inputToken.value = prefs.token; }
-    if (["95", "75", "55", "40"].indexOf(prefs.quality) >= 0) { selQuality.value = prefs.quality; }
+    if (["100", "95", "75", "55", "40"].indexOf(prefs.quality) >= 0) { selQuality.value = prefs.quality; }
     if (["100", "75", "50"].indexOf(prefs.scale) >= 0) { selScale.value = prefs.scale; }
     setDragMode(!!prefs.drag);
     state.quality = parseInt(selQuality.value, 10) || 75;
