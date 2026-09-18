@@ -158,6 +158,17 @@ internal static class Program
                     ? "no HelloAck with agent geometry within 20s"
                     : $"Ok={ack.Ok} {ack.ScreenWidth}x{ack.ScreenHeight} tile={ack.TileSize} peerOnline={ack.PeerOnline}"));
 
+            // The relay must answer a Ping ITSELF rather than forwarding it to the peer. If it only
+            // forwarded, an agent with no controller attached would never receive a Pong and would
+            // tear its own connection down every 45 s - reconnecting forever while looking perfectly
+            // "connected" from the outside. That was a real production bug.
+            await WsFraming.SendAsync(ws.Socket, MsgType.Ping, ReadOnlyMemory<byte>.Empty, cts.Token);
+            var pongSeen = await WaitForTypeAsync(ws.Socket, MsgType.Pong, TimeSpan.FromSeconds(5));
+            results.Add((pongSeen, "relay answers Ping",
+                pongSeen
+                    ? "Pong came back from the relay itself"
+                    : "no Pong within 5s (the relay is forwarding instead of answering)"));
+
             var firstKeyframe = await WaitForKeyframeAsync(ws.Socket, TimeSpan.FromSeconds(20));
             if (firstKeyframe is null)
             {
@@ -670,6 +681,25 @@ internal static class Program
         }
         var errors = File.ReadAllLines(logPath).Where(l => l.Contains("ERROR", StringComparison.OrdinalIgnoreCase)).ToArray();
         return errors.Length == 0 ? null : string.Join(" | ", errors.Take(3));
+    }
+
+    /// <summary>Reads messages until one of the requested type arrives, or the timeout expires.</summary>
+    private static async Task<bool> WaitForTypeAsync(WebSocket ws, byte type, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            var message = await ReceiveAsync(ws, deadline - DateTime.UtcNow);
+            if (message is null)
+            {
+                return false;
+            }
+            if (message.Value.Type == type)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static async Task<(byte Type, byte[] Payload)?> ReceiveAsync(WebSocket ws, TimeSpan timeout)

@@ -345,6 +345,27 @@ public sealed class RelaySession
                 return;
             }
 
+            // Heartbeat messages are answered by whoever RECEIVES them, and the relay is the peer's
+            // server for liveness purposes - so it must reply itself rather than forwarding.
+            //
+            // This is load-bearing. The agent tears its own connection down when no Pong arrives
+            // within its PongTimeout (45 s). If the relay merely forwarded the agent's Ping, that
+            // Ping would sit in the (empty) controller queue and be dropped whenever no controller
+            // is attached, so the agent would reconnect every 45 seconds forever while looking
+            // perfectly "connected" from the outside.
+            if (type == MsgType.Ping)
+            {
+                await source.SendAsync(MsgType.Pong, ReadOnlyMemory<byte>.Empty, ct).ConfigureAwait(false);
+                continue;
+            }
+
+            if (type == MsgType.Pong)
+            {
+                // Inbound Pongs answer the relay's own heartbeat. Nothing tracks them here, and
+                // forwarding them to a peer that never asked would only add noise.
+                continue;
+            }
+
             var wire = new WireMessage(type, payload);
             if (logDroppedMessages)
             {
