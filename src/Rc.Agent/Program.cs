@@ -8,6 +8,7 @@ internal static class Program
 {
     private const string MutexName = "rcagent.single-instance";
     private const string AutostartFlag = "--autostart";
+    private const string PigCheckFlag = "--pig-check";
 
     private static readonly IntPtr DpiAwarenessContextPerMonitorV2 = new(-4);
 
@@ -44,6 +45,12 @@ internal static class Program
         if (TryHandleAutostart(args, out var autostartExitCode))
         {
             return autostartExitCode;
+        }
+
+        // Headless self-check for the embedded status images: handled before any UI exists.
+        if (TryHandlePigCheck(args, out var pigCheckExitCode))
+        {
+            return pigCheckExitCode;
         }
 
         using var mutex = new Mutex(initiallyOwned: true, MutexName, out var isNew);
@@ -117,6 +124,43 @@ internal static class Program
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Handles <c>--pig-check</c>: loads both embedded status GIFs and prints one line with their
+    /// dimensions and frame count. Exits 1 with a message when an asset cannot be decoded. Returns
+    /// false when the flag is absent so the caller falls through to the normal startup path.
+    /// </summary>
+    private static bool TryHandlePigCheck(string[] args, out int exitCode)
+    {
+        exitCode = 0;
+        if (!args.Any(a => string.Equals(a, PigCheckFlag, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        UseUtf8ForRedirectedOutput();
+
+        var failed = false;
+        foreach (var (name, width, height, frames) in StatusPig.Describe())
+        {
+            if (width <= 0 || height <= 0)
+            {
+                WriteConsoleLine($"{name}: failed to load");
+                failed = true;
+                continue;
+            }
+
+            WriteConsoleLine($"{name,-12} {width}x{height} {frames,3} frames");
+        }
+
+        if (failed)
+        {
+            WriteConsoleLine("pig-check: one or more embedded status images failed to load.");
+            exitCode = 1;
+        }
+
+        return true;
     }
 
     private static bool TryParseAutostart(string[] args, out AutostartAction action)

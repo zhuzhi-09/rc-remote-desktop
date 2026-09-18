@@ -20,7 +20,9 @@ public sealed class AgentWindow : Form
     private readonly Button _toggleButton;
     private readonly CheckBox _autostartCheck;
     private readonly Font _toggleFont;
+    private readonly PictureBox _pigBox;
 
+    private AnimatedGif? _pigGif;
     private bool _sharing;
     private bool _autostartReverting;
     private string _state = "Starting";
@@ -37,7 +39,7 @@ public sealed class AgentWindow : Form
         MinimizeBox = true;
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
-        ClientSize = new Size(414, 292);
+        ClientSize = new Size(414, 460);
 
         _toggleFont = new Font(Font.FontFamily, 12F, FontStyle.Bold);
 
@@ -62,6 +64,16 @@ public sealed class AgentWindow : Form
             UseVisualStyleBackColor = true,
         };
         _toggleButton.Click += (_, _) => SharingToggled?.Invoke(!_sharing);
+
+        // Status pig: walking while connected, squashed flat while not. Zoom keeps the wide ok pig
+        // legible and centres the square fail pig inside the same box.
+        _pigBox = new PictureBox
+        {
+            Dock = DockStyle.Fill,
+            SizeMode = PictureBoxSizeMode.Zoom,
+            TabStop = false,
+            Margin = new Padding(0, 0, 0, 8),
+        };
 
         _hintLabel = new Label
         {
@@ -115,11 +127,12 @@ public sealed class AgentWindow : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(16, 14, 16, 12),
             ColumnCount = 1,
-            RowCount = 6,
+            RowCount = 7,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 168F));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
@@ -127,13 +140,15 @@ public sealed class AgentWindow : Form
 
         layout.Controls.Add(_statusLabel, 0, 0);
         layout.Controls.Add(_sharingLabel, 0, 1);
-        layout.Controls.Add(_toggleButton, 0, 2);
-        layout.Controls.Add(_autostartCheck, 0, 3);
-        layout.Controls.Add(_hintLabel, 0, 4);
-        layout.Controls.Add(bottom, 0, 5);
+        layout.Controls.Add(_pigBox, 0, 2);
+        layout.Controls.Add(_toggleButton, 0, 3);
+        layout.Controls.Add(_autostartCheck, 0, 4);
+        layout.Controls.Add(_hintLabel, 0, 5);
+        layout.Controls.Add(bottom, 0, 6);
         Controls.Add(layout);
 
         SetSharing(sharingEnabled);
+        SetPig(ok: false);
     }
 
     /// <summary>Raised when the user clicks the toggle; the argument is the desired sharing state.</summary>
@@ -172,6 +187,25 @@ public sealed class AgentWindow : Form
         _state = state;
         _statusLabel.ForeColor = SystemColors.ControlText;
         _statusLabel.Text = "连接状态：" + LocalizeState(state);
+    }
+
+    /// <summary>
+    /// Swaps the status pig: the walking pig while the relay connection is up, the squashed pig
+    /// otherwise. The previous animated GIF is disposed once the picture no longer references it.
+    /// </summary>
+    public void SetPig(bool ok)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<bool>(SetPig), ok);
+            return;
+        }
+
+        var next = StatusPig.LoadAnimated(ok);
+        var previous = _pigGif;
+        _pigGif = next;
+        _pigBox.Image = next?.Image;
+        previous?.Dispose();
     }
 
     /// <summary>
@@ -245,6 +279,11 @@ public sealed class AgentWindow : Form
         if (disposing)
         {
             DismissTrayHint();
+
+            // Detach the image before disposing it so the PictureBox stops the animation first.
+            _pigBox.Image = null;
+            _pigGif?.Dispose();
+            _pigGif = null;
             _toggleFont.Dispose();
         }
 

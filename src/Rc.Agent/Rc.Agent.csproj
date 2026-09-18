@@ -14,4 +14,8 @@
     <ProjectReference Include="..\Rc.Protocol\Rc.Protocol.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\**\*" />
+  </ItemGroup>
+
 </Project>

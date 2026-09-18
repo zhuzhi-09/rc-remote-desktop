@@ -20,6 +20,9 @@ public sealed class AgentContext : ApplicationContext
     private readonly CancellationTokenSource _stop = new();
     private readonly Thread _captureThread;
     private readonly ToolStripMenuItem _statusItem;
+    private readonly ToolStripMenuItem _pigItem;
+    private readonly Image? _pigOkImage;
+    private readonly Image? _pigFailImage;
     private readonly ToolStripMenuItem _openWindowItem = new("打开窗口");
     private readonly ToolStripMenuItem _sharingItem = new("暂停共享");
     private readonly ContextMenuStrip _menu;
@@ -59,6 +62,16 @@ public sealed class AgentContext : ApplicationContext
         };
 
         _statusItem = new ToolStripMenuItem("Status: starting") { Enabled = false };
+
+        // Menu images are decoded once; every state change swaps between the two cached instances.
+        _pigOkImage = StatusPig.LoadStatic(ok: true);
+        _pigFailImage = StatusPig.LoadStatic(ok: false);
+        _pigItem = new ToolStripMenuItem("未连接", _pigFailImage)
+        {
+            Enabled = false,
+            ImageScaling = ToolStripItemImageScaling.SizeToFit,
+        };
+
         _menu = BuildMenu();
         _notifyIcon = new NotifyIcon
         {
@@ -103,8 +116,13 @@ public sealed class AgentContext : ApplicationContext
         var openLog = new ToolStripMenuItem("Open log", null, (_, _) => OpenLog());
         var exit = new ToolStripMenuItem("Exit", null, (_, _) => ExitThread());
 
-        var menu = new ContextMenuStrip();
+        var menu = new ContextMenuStrip
+        {
+            // The default 16 px menu images render the pig as a smudge; 40 px keeps it recognisable.
+            ImageScalingSize = new Size(40, 40),
+        };
         menu.Items.Add(_openWindowItem);
+        menu.Items.Add(_pigItem);
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_sharingItem);
@@ -157,6 +175,7 @@ public sealed class AgentContext : ApplicationContext
         window.OpenLogRequested += OpenLog;
         window.ExitRequested += ExitThread;
         window.SetStatus(_state);
+        window.SetPig(IsConnected(_state));
         return window;
     }
 
@@ -251,24 +270,31 @@ public sealed class AgentContext : ApplicationContext
     private void OnStateChanged(string state)
     {
         _state = state;
+        var connected = IsConnected(state);
         _window?.SetStatus(state);
+        _window?.SetPig(connected);
 
         if (_ui is not null)
         {
-            _ui.Post(_ => ApplyTrayText(), null);
+            _ui.Post(_ => ApplyTrayText(state, connected), null);
         }
         else
         {
-            ApplyTrayText();
+            ApplyTrayText(state, connected);
         }
     }
 
-    private void ApplyTrayText()
+    /// <summary>Connected is the only state that shows the walking pig; everything else is failing.</summary>
+    private static bool IsConnected(string state) => string.Equals(state, "Connected", StringComparison.Ordinal);
+
+    private void ApplyTrayText(string state, bool connected)
     {
         try
         {
             _notifyIcon.Text = ComposeTrayText();
-            _statusItem.Text = "Status: " + _state;
+            _statusItem.Text = "Status: " + state;
+            _pigItem.Image = connected ? _pigOkImage : _pigFailImage;
+            _pigItem.Text = connected ? "已连接" : "未连接";
         }
         catch (Exception ex)
         {
@@ -309,6 +335,8 @@ public sealed class AgentContext : ApplicationContext
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
             _menu.Dispose();
+            _pigOkImage?.Dispose();
+            _pigFailImage?.Dispose();
             _encoder.Dispose();
             _capturer.Dispose();
             _scaled?.Dispose();
