@@ -70,6 +70,8 @@ app.MapGet("/control", (HttpContext context) => HandleSocketAsync(context, Role.
 app.MapGet("/app", () => ServeWebAsset("index.html"));
 app.MapGet("/app/app.js", () => ServeWebAsset("app.js"));
 app.MapGet("/app/app.css", () => ServeWebAsset("app.css"));
+app.MapGet("/app/pig-ok.gif", () => ServeWebAsset("pig-ok.gif"));
+app.MapGet("/app/pig-fail.gif", () => ServeWebAsset("pig-fail.gif"));
 
 app.Logger.LogInformation(
     "rcrelay ready: maxMessageBytes={MaxMessageBytes}, sessionTimeout={SessionTimeout}s, keepAlive=15s, ping=15s.",
@@ -185,6 +187,7 @@ static IResult ServeWebAsset(string fileName)
     {
         ".js" => "text/javascript; charset=utf-8",
         ".css" => "text/css; charset=utf-8",
+        ".gif" => "image/gif",
         _ => "text/html; charset=utf-8",
     };
 

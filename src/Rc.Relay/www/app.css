@@ -565,6 +565,55 @@ h1, p { margin: 0; }
   background: var(--c-surface);
 }
 
+/* ------------------------------------------------------------ 状态小猪 */
+
+.pig {
+  display: block;
+  margin: 0 auto;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* 连接失败：登录卡片里随错误提示一起出现 */
+.pig--connect {
+  width: 132px;
+  height: auto;
+  margin: var(--s-3) auto var(--s-2);
+  opacity: 0.9;
+}
+
+.pig--connect[hidden] { display: none; }
+
+/* 连接成功 / 失败：会话画面上的短暂浮层，不挡操作 */
+.pig--overlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.92);
+  width: 200px;
+  max-width: 55vw;
+  height: auto;
+  z-index: 5;
+  opacity: 0;
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.pig--overlay[hidden] { display: none; }
+
+.pig--overlay.is-shown {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* 走路的猪是横长条，压扁的猪接近方形，分别给个合适的宽度 */
+.pig--overlay.is-ok { width: 230px; }
+.pig--overlay.is-fail { width: 168px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pig--overlay { transition: none; }
+}
+
 /* ------------------------------------------------------------ 宽屏微调 */
 @media (min-width: 640px) {
   .connect { max-width: 400px; }

@@ -88,6 +88,7 @@
   var inputAgent = $("input-agent");
   var inputToken = $("input-token");
   var connectError = $("connect-error");
+  var connectPig = $("connect-pig");
 
   var stage = $("stage");
   var canvas = $("screen");
@@ -97,6 +98,7 @@
   var statusGeometry = $("status-geometry");
   var statusFps = $("status-fps");
   var sessionError = $("session-error");
+  var sessionPig = $("session-pig");
 
   var toolbarToggle = $("toolbar-toggle");
   var toolbarBody = $("toolbar-body");
@@ -887,6 +889,7 @@
        每次握手成功都主动补一帧完整画面。 */
     if (state.peerOnline) {
       setPill("已连接", "is-ok");
+      showSessionPig(true);
       /* 让工具栏里显示的画面参数成为实际生效的参数 */
       sendControl(CONTROL_KIND.QUALITY, state.quality);
       sendControl(CONTROL_KIND.SCALE, state.remoteScale);
@@ -1052,6 +1055,7 @@
           return;
         }
         setPill("连接断开", "is-err");
+        showSessionPig(false);
         scheduleReconnect();
       } catch (e) {
         reportError(e);
@@ -1080,6 +1084,35 @@
 
   /* ------------------------------------------------------------------ 界面切换 */
 
+  /* 状态小猪：连接成功放走路的猪，失败放压扁的猪。
+     成功的浮层短暂出现后淡出；失败的一直挂着，直到连上为止 —— 否则反复重连时会不停闪烁。
+     会话页用浮层（淡出靠 opacity，不用 hidden，避免与下一次显示抢状态），
+     登录页用作静态展示，跟随错误提示出现。 */
+  var PIG_OK = "/app/pig-ok.gif";
+  var PIG_FAIL = "/app/pig-fail.gif";
+  var pigTimer = 0;
+
+  function showSessionPig(ok) {
+    if (!sessionPig) { return; }
+    try {
+      sessionPig.src = ok ? PIG_OK : PIG_FAIL;
+      sessionPig.className = "pig pig--overlay " + (ok ? "is-ok" : "is-fail");
+      sessionPig.hidden = false;
+      void sessionPig.offsetWidth;          /* 强制布局，保证能从 opacity:0 过渡 */
+      sessionPig.classList.add("is-shown");
+      if (pigTimer) { clearTimeout(pigTimer); pigTimer = 0; }
+      if (ok) {
+        pigTimer = setTimeout(function () {
+          pigTimer = 0;
+          try { sessionPig.classList.remove("is-shown"); } catch (e) { /* ignore */ }
+        }, 2600);
+      }
+      /* 失败时不设超时：小猪常驻，连上后会被上面的 is-ok 替换 */
+    } catch (e) {
+      reportError(e);
+    }
+  }
+
   function showConnectScreen(message) {
     state.screen = "connect";
     state.stop = true;
@@ -1100,6 +1133,8 @@
       connectError.textContent = "";
       connectError.hidden = true;
     }
+
+    if (connectPig) { connectPig.hidden = !message; }
   }
 
   function showSessionScreen() {

@@ -52,6 +52,8 @@
                autocomplete="current-password" placeholder="访问令牌">
       </div>
 
+      <img id="connect-pig" class="pig pig--connect" src="/app/pig-fail.gif" alt="" hidden>
+
       <p id="connect-error" class="alert alert--inline" role="alert" aria-live="assertive" hidden></p>
 
       <button id="btn-connect" class="btn btn--primary btn--block" type="submit">连接</button>
@@ -84,6 +86,8 @@
     </div>
 
     <p id="session-error" class="alert alert--overlay" role="alert" hidden></p>
+
+    <img id="session-pig" class="pig pig--overlay" alt="" hidden>
   </div>
 
   <div id="toolbar" class="toolbar">
